@@ -1,0 +1,1247 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>KDIGO 2024 CKD Evaluation & Management System</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<style>
+body{font-family:'Inter',system-ui,sans-serif;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media print{.no-print{display:none !important}.print-only{display:block !important}}
+.print-only{display:none}
+.fa-solid::before,.fa-regular::before{display:inline-block;font-style:normal;line-height:1}
+.fa-notes-medical::before{content:"📋"}.fa-book-medical::before{content:"📖"}.fa-print::before{content:"🖨️"}
+.fa-calculator::before{content:"🧮"}.fa-table-cells::before{content:"▦"}.fa-chart-line::before{content:"📈"}
+.fa-user-md::before{content:"🩺"}.fa-user-pen::before{content:"✎"}.fa-square-minus::before{content:"⊟"}
+.fa-square-plus::before{content:"⊞"}.fa-star::before{content:"★"}.fa-triangle-exclamation::before{content:"⚠"}
+.fa-circle-check::before{content:"✔"}.fa-clock::before{content:"🕒"}.fa-pills::before{content:"💊"}
+.fa-utensils::before{content:"🍽️"}.fa-hospital-user::before{content:"🏥"}
+@media screen{
+html.dark{color-scheme:dark}
+html.dark body{background:#0b1220;color:#e2e8f0}
+html.dark .bg-white{background-color:#1e293b}
+html.dark .bg-white\/80{background-color:rgba(30,41,59,.85)}
+html.dark .bg-slate-50{background-color:#111a2c}
+html.dark .bg-slate-100{background-color:#1e293b}
+html.dark .bg-slate-200{background-color:#334155}
+html.dark .text-slate-900,html.dark .text-slate-800,html.dark .text-slate-700{color:#e2e8f0}
+html.dark .text-slate-600{color:#cbd5e1}
+html.dark .text-slate-500,html.dark .text-slate-400{color:#94a3b8}
+html.dark header .text-slate-400{color:#94a3b8}
+html.dark .border-slate-100,html.dark .border-slate-200,html.dark .border-slate-300{border-color:#334155}
+html.dark .text-teal-600,html.dark .text-teal-700,html.dark .text-teal-800,html.dark .text-teal-900{color:#5eead4}
+html.dark .bg-teal-50,html.dark .bg-teal-50\/60{background-color:rgba(20,184,166,.12)}
+html.dark .border-teal-100,html.dark .border-teal-200{border-color:rgba(20,184,166,.35)}
+html.dark .bg-amber-50{background-color:rgba(245,158,11,.12)}
+html.dark .border-amber-200{border-color:rgba(245,158,11,.35)}
+html.dark .text-amber-600,html.dark .text-amber-800{color:#fcd34d}
+html.dark .border-rose-200{border-color:rgba(244,63,94,.4)}
+html.dark .text-rose-500,html.dark .text-rose-600,html.dark .text-rose-700,html.dark .text-rose-800{color:#fda4af}
+html.dark .bg-rose-100{background-color:rgba(244,63,94,.18)}
+html.dark input,html.dark select,html.dark textarea{color:#e2e8f0}
+html.dark input::placeholder{color:#64748b}
+html.dark .hover\:bg-slate-100:hover{background-color:#273449}
+html.dark .hover\:text-slate-900:hover,html.dark .hover\:text-slate-600:hover{color:#f1f5f9}
+}
+</style>
+</head>
+<body class="bg-slate-50">
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useMemo, useEffect } = React;
+
+// --- UTILITY CALCULATIONS (KDIGO 2024 & CKD-EPI 2021) ---
+
+/**
+* CKD-EPI 2021 Creatinine (Race-free)
+* eGFR = 142 * min(Scr/kappa, 1)^alpha * max(Scr/kappa, 1)^-1.200 * 0.9938^Age * (1.012 if female)
+*/
+function calcEGFRCr(age, sex, scr) {
+if (!age || !scr || age <= 0 || scr <= 0) return null;
+const isFemale = sex === 'female';
+const kappa = isFemale ? 0.7 : 0.9;
+const alpha = isFemale ? -0.241 : -0.302;
+const femaleFactor = isFemale ? 1.012 : 1.0;
+
+const scrK = scr / kappa;
+const minPart = Math.pow(Math.min(scrK, 1), alpha);
+const maxPart = Math.pow(Math.max(scrK, 1), -1.200);
+const agePart = Math.pow(0.9938, age);
+
+const egfr = 142 * minPart * maxPart * agePart * femaleFactor;
+return Math.round(egfr * 10) / 10;
+}
+
+/**
+* CKD-EPI 2021 Combination (Creatinine-Cystatin C)
+* eGFR = 135 * min(Scr/kappa, 1)^alpha * max(Scr/kappa, 1)^-0.544 * min(Scys/0.8, 1)^-0.323 * max(Scys/0.8, 1)^-0.778 * 0.9961^Age * (0.963 if female)
+*/
+function calcEGFRCrCys(age, sex, scr, scys) {
+if (!age || !scr || !scys || age <= 0 || scr <= 0 || scys <= 0) return null;
+const isFemale = sex === 'female';
+const kappa = isFemale ? 0.7 : 0.9;
+const alpha = isFemale ? -0.219 : -0.144;
+const femaleFactor = isFemale ? 0.963 : 1.0;
+
+const scrK = scr / kappa;
+const scysK = scys / 0.8;
+
+const minScr = Math.pow(Math.min(scrK, 1), alpha);
+const maxScr = Math.pow(Math.max(scrK, 1), -0.544);
+const minScys = Math.pow(Math.min(scysK, 1), -0.323);
+const maxScys = Math.pow(Math.max(scysK, 1), -0.778);
+const agePart = Math.pow(0.9961, age);
+
+const egfr = 135 * minScr * maxScr * minScys * maxScys * agePart * femaleFactor;
+return Math.round(egfr * 10) / 10;
+}
+
+/**
+* Body Surface Area (DuBois formula) for BSA De-indexing
+* BSA (m2) = 0.007184 * Weight(kg)^0.425 * Height(cm)^0.725
+*/
+function calcBSA(weight, height) {
+if (!weight || !height || weight <= 0 || height <= 0) return null;
+return 0.007184 * Math.pow(weight, 0.425) * Math.pow(height, 0.725);
+}
+
+/**
+* KFRE 4-Variable Equation (North American calibration / Non-North American adjusted standard)
+* Vars: Age, Sex (1 male, 0 female), eGFR (mL/min/1.73m2), ACR (mg/g)
+*/
+function calcKFRE(age, sex, egfr, uacr) {
+if (!age || !egfr || !uacr || egfr <= 0 || uacr <= 0) return null;
+const isMale = sex === 'male' ? 1 : 0;
+const lnUACR = Math.log(uacr);
+
+// Coeffs for 4-variable KFRE (Tangri et al.)
+const betaAge = -0.2201 * (age / 10 - 7.036);
+const betaSex = 0.2694 * (isMale - 0.5642);
+const betaEgfr = -0.5567 * (egfr / 5 - 7.222);
+const betaUacr = 0.4510 * (lnUACR - 5.137);
+
+const score = betaAge + betaSex + betaEgfr + betaUacr;
+// Baseline survival probabilities (Non-North America baseline as per global standard)
+// 2-Year baseline: 0.9832, 5-Year baseline: 0.9365
+const prob2Yr = 1 - Math.pow(0.9832, Math.exp(score));
+const prob5Yr = 1 - Math.pow(0.9365, Math.exp(score));
+
+return {
+twoYear: Math.min(Math.max(Math.round(prob2Yr * 1000) / 10, 0.1), 99.9),
+fiveYear: Math.min(Math.max(Math.round(prob5Yr * 1000) / 10, 0.1), 99.9)
+};
+}
+
+// --- STAGING & RISK MATRIX CONFIG (KDIGO 2024) ---
+function getGStage(egfr) {
+if (egfr >= 90) return { stage: 'G1', label: 'Normal / Tinggi', range: '≥90' };
+if (egfr >= 60) return { stage: 'G2', label: 'Penurunan Ringan', range: '60-89' };
+if (egfr >= 45) return { stage: 'G3a', label: 'Penurunan Ringan-Sedang', range: '45-59' };
+if (egfr >= 30) return { stage: 'G3b', label: 'Penurunan Sedang-Berat', range: '30-44' };
+if (egfr >= 15) return { stage: 'G4', label: 'Penurunan Berat', range: '15-29' };
+return { stage: 'G5', label: 'Gagal Ginjal', range: '<15' };
+}
+
+function getAStage(uacr) {
+if (uacr < 30) return { stage: 'A1', label: 'Normal s.d. Ringan', range: '<30 mg/g (<3 mg/mmol)' };
+if (uacr <= 300) return { stage: 'A2', label: 'Meningkat Sedang', range: '30-300 mg/g (3-30 mg/mmol)' };
+return { stage: 'A3', label: 'Meningkat Berat', range: '>300 mg/g (>30 mg/mmol)' };
+}
+
+// Risk Level Matrix: low, moderate, high, very-high
+const RISK_GRID = {
+'G1': { 'A1': 'low', 'A2': 'moderate', 'A3': 'high' },
+'G2': { 'A1': 'low', 'A2': 'moderate', 'A3': 'high' },
+'G3a': { 'A1': 'moderate', 'A2': 'high', 'A3': 'very-high' },
+'G3b': { 'A1': 'high', 'A2': 'very-high', 'A3': 'very-high' },
+'G4': { 'A1': 'very-high', 'A2': 'very-high', 'A3': 'very-high' },
+'G5': { 'A1': 'very-high', 'A2': 'very-high', 'A3': 'very-high' }
+};
+
+const RISK_DETAILS = {
+'low': {
+name: 'Risiko Rendah (Low Risk)',
+color: 'bg-emerald-500 text-white',
+border: 'border-emerald-600',
+badgeBg: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+monitoring: 'Pemantauan minimal 1x per tahun',
+desc: 'Risiko komplikasi CKD dan progresivitas sangat rendah jika tidak ada etiologi progresif spesifik.'
+},
+'moderate': {
+name: 'Risiko Sedang (Moderate Risk)',
+color: 'bg-yellow-400 text-slate-900',
+border: 'border-yellow-500',
+badgeBg: 'bg-yellow-100 text-yellow-800 border-yellow-300',
+monitoring: 'Pemantauan minimal 1x per tahun',
+desc: 'Evaluasi faktor risiko dan tingkatkan kontrol tekanan darah serta glikemik.'
+},
+'high': {
+name: 'Risiko Tinggi (High Risk)',
+color: 'bg-orange-500 text-white',
+border: 'border-orange-600',
+badgeBg: 'bg-orange-100 text-orange-800 border-orange-300',
+monitoring: 'Pemantauan 2-3x per tahun',
+desc: 'Termasuk kategori G1/A3 & G2/A3 (KDIGO 2024 menekankan zona proteinuria berat meskipun eGFR terpreservasi). Waspadai komplikasi kardiovaskular.'
+},
+'very-high': {
+name: 'Risiko Sangat Tinggi (Very High Risk)',
+color: 'bg-rose-700 text-white',
+border: 'border-rose-800',
+badgeBg: 'bg-rose-100 text-rose-800 border-rose-300',
+monitoring: 'Pemantauan 3-4x+ per tahun & Konsultasi Spesialis',
+desc: 'Risiko tinggi progres ke gagal ginjal terminal (ESKD) dan morbiditas kardiovaskular. Diperlukan intervensi agresif dan rujukan spesialis.'
+}
+};
+
+/**
+ * BMI: WHO Asia-Pasifik & Kemenkes RI
+ */
+function calcBMI(weight, height) {
+if (!weight || !height || weight <= 0 || height <= 0) return null;
+const m = height / 100;
+return weight / (m * m);
+}
+
+const BMI_COLORS = { blue: '#3b82f6', darkBlue: '#1d4ed8', green: '#22c55e', yellow: '#facc15', red: '#ef4444', darkRed: '#b91c1c' };
+
+const BMI_GUIDELINES = {
+apac: {
+title: 'WHO Asia-Pasifik',
+min: 15, max: 40,
+ticks: [18.5, 23, 25, 30],
+segments: [
+{ from: 15, to: 18.5, color: BMI_COLORS.blue, label: 'Berat badan kurang', range: '< 18,5' },
+{ from: 18.5, to: 23, color: BMI_COLORS.green, label: 'Normal', range: '18,5 – 22,9' },
+{ from: 23, to: 25, color: BMI_COLORS.yellow, label: 'Berat badan lebih (berisiko)', range: '23 – 24,9' },
+{ from: 25, to: 30, color: BMI_COLORS.red, label: 'Obesitas I', range: '25 – 29,9' },
+{ from: 30, to: 40, color: BMI_COLORS.darkRed, label: 'Obesitas II', range: '≥ 30' }
+],
+index: (b) => (b < 18.5 ? 0 : b < 23 ? 1 : b < 25 ? 2 : b < 30 ? 3 : 4)
+},
+kemenkes: {
+title: 'Kemenkes RI',
+min: 15, max: 40,
+ticks: [17, 18.5, 25, 27],
+segments: [
+{ from: 15, to: 17, color: BMI_COLORS.darkBlue, label: 'Kurus (tingkat berat)', range: '< 17,0' },
+{ from: 17, to: 18.5, color: BMI_COLORS.blue, label: 'Kurus (tingkat ringan)', range: '17,0 – 18,4' },
+{ from: 18.5, to: 25, color: BMI_COLORS.green, label: 'Normal', range: '18,5 – 25,0' },
+{ from: 25, to: 27, color: BMI_COLORS.yellow, label: 'Gemuk (tingkat ringan)', range: '> 25,0 – 27,0' },
+{ from: 27, to: 40, color: BMI_COLORS.red, label: 'Gemuk (tingkat berat / obesitas)', range: '> 27,0' }
+],
+index: (b) => (b < 17 ? 0 : b < 18.5 ? 1 : b <= 25 ? 2 : b <= 27 ? 3 : 4)
+}
+};
+
+function bmiCategory(guideKey, bmi) {
+const g = BMI_GUIDELINES[guideKey];
+return g.segments[g.index(bmi)];
+}
+
+function BMIScale({ guideKey, bmi }) {
+const g = BMI_GUIDELINES[guideKey];
+const pct = (v) => Math.min(100, Math.max(0, ((v - g.min) / (g.max - g.min)) * 100));
+const active = bmi != null ? g.index(bmi) : -1;
+return (
+<div className="space-y-2">
+<div className="flex items-center justify-between">
+<h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">{g.title}</h3>
+{active >= 0 && (
+<span className="text-[11px] font-bold px-2 py-0.5 rounded text-white" style={{ background: g.segments[active].color }}>
+{g.segments[active].label}
+</span>
+)}
+</div>
+
+{/* Diagram skala: biru - hijau - kuning - merah, garis = posisi BMI */}
+<div className="relative pt-7 pb-6">
+<div className="flex h-5 rounded-full overflow-hidden border border-slate-300">
+{g.segments.map((s, i) => (
+<div key={i} title={s.label + ' (' + s.range + ')'} style={{ width: (pct(s.to) - pct(s.from)) + '%', background: s.color, opacity: active === -1 || active === i ? 1 : 0.55 }}></div>
+))}
+</div>
+
+{bmi != null && (
+<div style={{ position: 'absolute', left: pct(bmi) + '%', top: 0, bottom: 14, transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', pointerEvents: 'none' }}>
+<span className="text-[10px] font-bold bg-slate-900 text-white px-1.5 py-0.5 rounded whitespace-nowrap">{bmi.toFixed(1)}</span>
+<div style={{ width: 3, flex: 1, background: '#111827', boxShadow: '0 0 0 1px #ffffff' }}></div>
+</div>
+)}
+
+{g.ticks.map((t) => (
+<span key={t} className="absolute text-[10px] text-slate-500 font-medium" style={{ left: pct(t) + '%', bottom: 0, transform: 'translateX(-50%)' }}>{t}</span>
+))}
+</div>
+
+<ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1">
+{g.segments.map((s, i) => (
+<li key={i} className={`flex items-center gap-1.5 text-[11px] ${active === i ? 'font-bold text-slate-800' : 'text-slate-600'}`}>
+<span className="inline-block w-3 h-3 rounded-sm flex-shrink-0" style={{ background: s.color }}></span>
+<span>{s.label}: <span className="font-mono">{s.range}</span></span>
+</li>
+))}
+</ul>
+</div>
+);
+}
+
+function BMICard({ weight, height, setWeight, setHeight }) {
+const bmi = calcBMI(parseFloat(weight), parseFloat(height));
+return (
+<div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+<div className="flex items-center justify-between border-b pb-3 border-slate-100">
+<h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider">⚖️ Indeks Massa Tubuh (BMI)</h2>
+<span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono">kg / m²</span>
+</div>
+
+<div className="grid grid-cols-2 gap-3">
+<div>
+<label className="block text-xs font-medium text-slate-700 mb-1">Berat Badan (kg)</label>
+<input type="number" value={weight} onChange={e => setWeight(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm font-medium focus:ring-2 focus:ring-teal-500 focus:outline-none" placeholder="Contoh: 65" />
+</div>
+<div>
+<label className="block text-xs font-medium text-slate-700 mb-1">Tinggi Badan (cm)</label>
+<input type="number" value={height} onChange={e => setHeight(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm font-medium focus:ring-2 focus:ring-teal-500 focus:outline-none" placeholder="Contoh: 165" />
+</div>
+</div>
+
+{bmi == null ? (
+<p className="text-xs text-slate-500 text-center py-3">Masukkan berat dan tinggi badan untuk menghitung BMI.</p>
+) : (
+<div className="space-y-5">
+<div className="text-center">
+<span className="text-3xl font-extrabold text-slate-800">{bmi.toFixed(1)}</span>
+<span className="text-xs text-slate-500 ml-1">kg/m²</span>
+</div>
+<BMIScale guideKey="apac" bmi={bmi} />
+<BMIScale guideKey="kemenkes" bmi={bmi} />
+<p className="text-[11px] text-slate-500 leading-snug">
+Garis hitam pada diagram menunjukkan posisi BMI pasien. BMI tidak memperhitungkan edema/kelebihan cairan dan komposisi otot, sehingga pada pasien CKD/dialisis interpretasi perlu mempertimbangkan status cairan (berat kering).
+</p>
+</div>
+)}
+</div>
+);
+}
+
+// --- MAIN APP COMPONENT ---
+function App() {
+// Tab state
+const [activeTab, setActiveTab] = useState('calculator'); // 'calculator', 'heatmap', 'kfre', 'guidelines'
+// Patient Inputs
+const [age, setAge] = useState(58);
+const [sex, setSex] = useState('male');
+const [scr, setScr] = useState(1.4);
+const [scys, setScys] = useState('');
+const [uacr, setUacr] = useState(120);
+const [uacrUnit, setUacrUnit] = useState('mgg'); // 'mgg' or 'mgmmol'
+// Advanced / BSA De-indexing Inputs
+const [useDeindexed, setUseDeindexed] = useState(false);
+const [weight, setWeight] = useState(70); // kg
+const [height, setHeight] = useState(170); // cm
+
+// Chronicity & Modal States
+const [isChronicityConfirmed, setIsChronicityConfirmed] = useState(true);
+const [isGuidelineModalOpen, setIsGuidelineModalOpen] = useState(false);
+const [confirmReset, setConfirmReset] = useState(false);
+
+// Theme (light / dark)
+const [theme, setTheme] = useState(() => {
+try {
+const saved = localStorage.getItem('kdigo-theme');
+if (saved === 'dark' || saved === 'light') return saved;
+} catch (e) {}
+return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+});
+useEffect(() => {
+document.documentElement.classList.toggle('dark', theme === 'dark');
+try { localStorage.setItem('kdigo-theme', theme); } catch (e) {}
+}, [theme]);
+const toggleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
+
+// Reset / hapus semua data pasien
+const handleReset = () => {
+setAge(''); setSex('male'); setScr(''); setScys(''); setUacr(''); setUacrUnit('mgg');
+setUseDeindexed(false); setWeight(''); setHeight('');
+setIsChronicityConfirmed(true); setActiveTab('calculator');
+setConfirmReset(false);
+};
+
+// Normalized UACR in mg/g
+const normalizedUACR = useMemo(() => {
+const val = parseFloat(uacr);
+if (isNaN(val)) return 0;
+return uacrUnit === 'mgmmol' ? val * 8.84 : val;
+}, [uacr, uacrUnit]);
+
+// Calculated eGFRs
+const egfrCr = useMemo(() => calcEGFRCr(parseFloat(age), sex, parseFloat(scr)), [age, sex, scr]);
+const egfrCrCys = useMemo(() => calcEGFRCrCys(parseFloat(age), sex, parseFloat(scr), parseFloat(scys)), [age, sex, scr, scys]);
+// Selected Active eGFR for Staging (Prioritize Cr-Cys if present)
+const activeEGFR = egfrCrCys !== null ? egfrCrCys : egfrCr;
+
+// BSA & De-indexed eGFR
+const bsa = useMemo(() => calcBSA(parseFloat(weight), parseFloat(height)), [weight, height]);
+const deindexedEGFR = useMemo(() => {
+if (!activeEGFR || !bsa) return null;
+return Math.round((activeEGFR * bsa / 1.73) * 10) / 10;
+}, [activeEGFR, bsa]);
+
+// CKD Staging & Risk
+const gStage = useMemo(() => activeEGFR !== null ? getGStage(activeEGFR) : null, [activeEGFR]);
+const aStage = useMemo(() => normalizedUACR > 0 ? getAStage(normalizedUACR) : null, [normalizedUACR]);
+const riskLevelKey = useMemo(() => {
+if (!gStage || !aStage) return null;
+return RISK_GRID[gStage.stage][aStage.stage];
+}, [gStage, aStage]);
+
+const riskInfo = riskLevelKey ? RISK_DETAILS[riskLevelKey] : null;
+
+// KFRE Calculation
+const kfreResult = useMemo(() => {
+if (!activeEGFR || normalizedUACR <= 0 || !age) return null;
+return calcKFRE(parseFloat(age), sex, activeEGFR, normalizedUACR);
+}, [age, sex, activeEGFR, normalizedUACR]);
+
+// Print Trigger
+const handlePrint = () => {
+window.print();
+};
+
+return (
+<div className="min-h-screen flex flex-col justify-between text-slate-800">
+{/* APP HEADER */}
+<header className="bg-slate-900 text-white shadow-lg border-b border-teal-500/30 sticky top-0 z-40 no-print">
+<div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 min-h-[4rem] py-2 gap-3 flex-wrap flex items-center justify-between">
+<div className="flex items-center space-x-3">
+<div className="bg-teal-500 text-slate-900 p-2 rounded-lg font-black text-xl flex items-center justify-center w-10 h-10 shadow-md">
+<i className="fa-solid fa-notes-medical"></i>
+</div>
+<div>
+<h1 className="text-lg font-bold leading-tight flex items-center gap-2">
+GinjalKita <span className="bg-teal-500/20 text-teal-300 text-xs px-2 py-0.5 rounded-full font-medium border border-teal-500/40">KDIGO 2024</span>
+</h1>
+<p className="text-xs text-slate-400">CKD Evaluation & Decision Support System</p>
+<p className="text-[10px] text-teal-300 font-medium leading-tight">Supervisi: dr. Puguh Widagdo, SpPD - FINASIM · Fellowship Hemodialisis</p>
+</div>
+</div>
+
+{/* Header Actions */}
+<div className="flex items-center gap-2 flex-wrap">
+<button
+onClick={toggleTheme}
+title={theme === 'dark' ? 'Ganti ke mode terang' : 'Ganti ke mode gelap'}
+aria-label="Ganti mode tampilan"
+className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-semibold rounded-lg border border-teal-500/30 flex items-center gap-1.5 transition"
+>
+<span>{theme === 'dark' ? '☀️' : '🌙'}</span>
+<span className="hidden sm:inline">{theme === 'dark' ? 'Mode Terang' : 'Mode Gelap'}</span>
+</button>
+{confirmReset ? (
+<div className="flex items-center gap-1.5">
+<button onClick={handleReset} className="px-3 py-1.5 bg-rose-700 hover:bg-rose-600 text-white text-xs font-semibold rounded-lg shadow transition">Ya, hapus</button>
+<button onClick={() => setConfirmReset(false)} className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-lg border border-slate-600 transition">Batal</button>
+</div>
+) : (
+<button
+onClick={() => setConfirmReset(true)}
+title="Hapus semua data dan mulai pasien baru"
+className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-rose-300 text-xs font-semibold rounded-lg border border-rose-400/40 flex items-center gap-1.5 transition"
+>
+<span>🗑️</span>
+<span className="hidden sm:inline">Hapus / Reset Data</span>
+</button>
+)}
+<button
+onClick={() => setIsGuidelineModalOpen(true)}
+className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-teal-300 text-xs font-semibold rounded-lg border border-teal-500/30 flex items-center gap-1.5 transition"
+>
+<i className="fa-solid fa-book-medical"></i>
+<span className="hidden sm:inline">Panduan KDIGO 2024</span>
+</button>
+<button
+onClick={handlePrint}
+className="px-3 py-1.5 bg-teal-600 hover:bg-teal-500 text-white text-xs font-semibold rounded-lg shadow flex items-center gap-1.5 transition"
+>
+<i className="fa-solid fa-print"></i>
+<span className="hidden sm:inline">Cetak Ringkasan</span>
+</button>
+</div>
+</div>
+</header>
+
+{/* MAIN CONTENT NAVIGATION TABS */}
+<main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-grow w-full">
+{/* Tab Buttons */}
+<div className="flex border-b border-slate-200 mb-6 bg-white rounded-xl shadow-sm p-1.5 no-print overflow-x-auto">
+<button
+onClick={() => setActiveTab('calculator')}
+className={`flex-1 min-w-[140px] py-2.5 px-4 text-xs sm:text-sm font-semibold rounded-lg transition-all duration-200 flex items-center justify-center gap-2 ${
+activeTab === 'calculator'
+? 'bg-teal-600 text-white shadow'
+: 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+}`}
+>
+<i className="fa-solid fa-calculator"></i>
+<span>Kalkulator & Stratifikasi</span>
+</button>
+<button
+onClick={() => setActiveTab('heatmap')}
+className={`flex-1 min-w-[140px] py-2.5 px-4 text-xs sm:text-sm font-semibold rounded-lg transition-all duration-200 flex items-center justify-center gap-2 ${
+activeTab === 'heatmap'
+? 'bg-teal-600 text-white shadow'
+: 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+}`}
+>
+<i className="fa-solid fa-table-cells"></i>
+<span>Interactive Heat Map</span>
+</button>
+<button
+onClick={() => setActiveTab('kfre')}
+className={`flex-1 min-w-[140px] py-2.5 px-4 text-xs sm:text-sm font-semibold rounded-lg transition-all duration-200 flex items-center justify-center gap-2 ${
+activeTab === 'kfre'
+? 'bg-teal-600 text-white shadow'
+: 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+}`}
+>
+<i className="fa-solid fa-chart-line"></i>
+<span>Prediksi Risiko (KFRE)</span>
+</button>
+<button
+onClick={() => setActiveTab('guidelines')}
+className={`flex-1 min-w-[140px] py-2.5 px-4 text-xs sm:text-sm font-semibold rounded-lg transition-all duration-200 flex items-center justify-center gap-2 ${
+activeTab === 'guidelines'
+? 'bg-teal-600 text-white shadow'
+: 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+}`}
+>
+<i className="fa-solid fa-user-md"></i>
+<span>Dosis & Manajemen CDSS</span>
+</button>
+</div>
+
+{/* SECTION 1: CALCULATOR & STAGING SUMMARY */}
+{activeTab === 'calculator' && (
+<div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+{/* Input Panel */}
+<div className="lg:col-span-5 space-y-5">
+<div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+<div className="flex items-center justify-between border-b pb-3 border-slate-100">
+<h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+<i className="fa-solid fa-user-pen text-teal-600"></i> Parameter Pasien
+</h2>
+<span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono">CKD-EPI 2021</span>
+</div>
+
+<div className="grid grid-cols-2 gap-4">
+<div>
+<label className="block text-xs font-medium text-slate-700 mb-1">Usia (Tahun)</label>
+<input
+type="number"
+value={age}
+onChange={e => setAge(e.target.value)}
+className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm font-medium focus:ring-2 focus:ring-teal-500 focus:outline-none"
+placeholder="Contoh: 60"
+/>
+</div>
+<div>
+<label className="block text-xs font-medium text-slate-700 mb-1">Jenis Kelamin</label>
+<select
+value={sex}
+onChange={e => setSex(e.target.value)}
+className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm font-medium focus:ring-2 focus:ring-teal-500 focus:outline-none"
+>
+<option value="male">Laki-laki</option>
+<option value="female">Perempuan</option>
+</select>
+</div>
+</div>
+
+{/* Serum Lab Inputs */}
+<div className="space-y-3 pt-1">
+<div>
+<label className="block text-xs font-medium text-slate-700 mb-1">
+Serum Kreatinin <span className="text-rose-500">*</span> (mg/dL)
+</label>
+<input
+type="number"
+step="0.01"
+value={scr}
+onChange={e => setScr(e.target.value)}
+className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm font-medium focus:ring-2 focus:ring-teal-500 focus:outline-none"
+placeholder="Contoh: 1.2"
+/>
+</div>
+
+<div>
+<div className="flex justify-between items-center mb-1">
+<label className="block text-xs font-medium text-slate-700">
+Serum Sistatin C <span className="text-slate-400 font-normal">(Opsional, mg/L)</span>
+</label>
+<span className="text-[10px] bg-teal-50 text-teal-700 font-semibold px-1.5 py-0.5 rounded border border-teal-200">
+KDIGO 2024 Recommended
+</span>
+</div>
+<input
+type="number"
+step="0.01"
+value={scys}
+onChange={e => setScys(e.target.value)}
+className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm font-medium focus:ring-2 focus:ring-teal-500 focus:outline-none"
+placeholder="Masukkan jika ada"
+/>
+<span className="text-[11px] text-slate-500 mt-1 block">
+Nilai normal: <strong className="text-teal-700">0,5 – 1,0 mg/L</strong> (dewasa; rentang dapat sedikit berbeda antar laboratorium)
+{scys !== '' && !isNaN(parseFloat(scys)) && (
+<strong className={parseFloat(scys) > 1.0 ? ' text-rose-600' : parseFloat(scys) < 0.5 ? ' text-amber-600' : ' text-teal-700'}>
+ {' '}· {parseFloat(scys) > 1.0 ? 'Di atas normal' : parseFloat(scys) < 0.5 ? 'Di bawah rentang' : 'Dalam batas normal'}
+</strong>
+)}
+</span>
+</div>
+
+<div>
+<div className="flex justify-between items-center mb-1">
+<label className="block text-xs font-medium text-slate-700">
+Urine Albumin-to-Creatinine Ratio (UACR) <span className="text-rose-500">*</span>
+</label>
+<div className="flex text-xs border rounded overflow-hidden">
+<button
+onClick={() => setUacrUnit('mgg')}
+className={`px-2 py-0.5 ${uacrUnit === 'mgg' ? 'bg-teal-600 text-white' : 'bg-slate-100 text-slate-600'}`}
+>
+mg/g
+</button>
+<button
+onClick={() => setUacrUnit('mgmmol')}
+className={`px-2 py-0.5 ${uacrUnit === 'mgmmol' ? 'bg-teal-600 text-white' : 'bg-slate-100 text-slate-600'}`}
+>
+mg/mmol
+</button>
+</div>
+</div>
+<input
+type="number"
+step="0.1"
+value={uacr}
+onChange={e => setUacr(e.target.value)}
+className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm font-medium focus:ring-2 focus:ring-teal-500 focus:outline-none"
+placeholder="Contoh: 150"
+/>
+{uacrUnit === 'mgmmol' && (
+<span className="text-[11px] text-slate-500 mt-1 block">
+Setara dengan ~{Math.round(normalizedUACR)} mg/g
+</span>
+)}
+<span className="text-[11px] text-slate-500 mt-1 block">
+Nilai normal: <strong className="text-teal-700">&lt;30 mg/g</strong> (&lt;3 mg/mmol); optimal &lt;10 mg/g
+{normalizedUACR > 0 && (
+<strong className={normalizedUACR >= 30 ? ' text-rose-600' : ' text-teal-700'}>
+ {' '}· {normalizedUACR >= 300 ? 'Meningkat berat (A3)' : normalizedUACR >= 30 ? 'Meningkat sedang (A2)' : 'Dalam batas normal (A1)'}
+</strong>
+)}
+</span>
+</div>
+</div>
+
+{/* Advanced Section Toggle (BSA / De-indexed eGFR) */}
+<div className="pt-2 border-t border-slate-100">
+<button
+onClick={() => setUseDeindexed(!useDeindexed)}
+className="text-xs font-semibold text-teal-700 hover:text-teal-800 flex items-center gap-1.5 focus:outline-none"
+>
+<i className={`fa-solid ${useDeindexed ? 'fa-square-minus' : 'fa-square-plus'}`}></i>
+<span>Penyesuaian BSA / Non-indexed eGFR (Obat Dosis Kritis)</span>
+</button>
+
+{useDeindexed && (
+<div className="mt-3 p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
+<p className="text-[11px] text-slate-600">
+Gunakan eGFR unadjusted mL/min untuk pasien berat badan ekstrem atau penyesuaian dosis obat indeks terapi sempit (KDIGO 2024).
+</p>
+<div className="grid grid-cols-2 gap-3">
+<div>
+<label className="block text-xs font-medium text-slate-700 mb-1">Berat Badan (kg)</label>
+<input
+type="number"
+value={weight}
+onChange={e => setWeight(e.target.value)}
+className="w-full bg-white border border-slate-300 rounded px-2.5 py-1.5 text-xs font-medium"
+/>
+</div>
+<div>
+<label className="block text-xs font-medium text-slate-700 mb-1">Tinggi Badan (cm)</label>
+<input
+type="number"
+value={height}
+onChange={e => setHeight(e.target.value)}
+className="w-full bg-white border border-slate-300 rounded px-2.5 py-1.5 text-xs font-medium"
+/>
+</div>
+</div>
+</div>
+)}
+</div>
+
+{/* Chronicity Checklist Requirement */}
+<div className="pt-2 border-t border-slate-100">
+<label className="flex items-start space-x-2.5 cursor-pointer">
+<input
+type="checkbox"
+checked={isChronicityConfirmed}
+onChange={e => setIsChronicityConfirmed(e.target.checked)}
+className="mt-0.5 rounded text-teal-600 focus:ring-teal-500 h-4 w-4"
+/>
+<span className="text-xs text-slate-600 leading-snug">
+<strong className="text-slate-800">Konfirmasi Kronisitas KDIGO:</strong> Abnormalitas ginjal (eGFR/UACR) telah berlangsung <strong>≥ 3 bulan</strong>.
+</span>
+</label>
+</div>
+
+</div>
+
+{/* BMI Card */}
+<BMICard weight={weight} height={height} setWeight={setWeight} setHeight={setHeight} />
+</div>
+
+{/* Results & Interactive Clinical Summary Panel */}
+<div className="lg:col-span-7 space-y-5">
+{/* eGFR Cards */}
+<div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+<h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+Hasil Estimasi GFR (CKD-EPI 2021)
+</h3>
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+{/* eGFR Cr Card */}
+<div className={`p-4 rounded-xl border transition ${egfrCrCys === null ? 'bg-teal-50/50 border-teal-300 ring-2 ring-teal-500/20' : 'bg-slate-50 border-slate-200'}`}>
+<div className="flex justify-between items-start">
+<span className="text-xs font-semibold text-slate-600">eGFRcr (Kreatinin)</span>
+{egfrCrCys === null && <span className="text-[10px] bg-teal-600 text-white px-2 py-0.5 rounded font-bold">Digunakan</span>}
+</div>
+<div className="mt-2 flex items-baseline gap-1.5">
+<span className="text-3xl font-extrabold text-slate-900">{egfrCr !== null ? egfrCr : '--'}</span>
+<span className="text-xs font-medium text-slate-500">mL/min/1.73m²</span>
+</div>
+</div>
+
+{/* eGFR Cr-Cys Card */}
+<div className={`p-4 rounded-xl border transition ${egfrCrCys !== null ? 'bg-emerald-50 border-emerald-400 ring-2 ring-emerald-500/20' : 'bg-slate-50 border-dashed border-slate-300'}`}>
+<div className="flex justify-between items-start">
+<span className="text-xs font-semibold text-slate-700">eGFRcr-cys (Kombinasi)</span>
+{egfrCrCys !== null && (
+<span className="text-[10px] bg-emerald-700 text-white px-2 py-0.5 rounded font-bold flex items-center gap-1">
+<i className="fa-solid fa-star text-[9px]"></i> Direkomendasikan (KDIGO 2024)
+</span>
+)}
+</div>
+<div className="mt-2 flex items-baseline gap-1.5">
+<span className="text-3xl font-extrabold text-slate-900">{egfrCrCys !== null ? egfrCrCys : '--'}</span>
+<span className="text-xs font-medium text-slate-500">mL/min/1.73m²</span>
+</div>
+</div>
+</div>
+
+{/* Disclaimer or Cystatin C Note */}
+{scys === '' ? (
+<div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-xs flex items-start gap-2.5">
+<i className="fa-solid fa-triangle-exclamation text-amber-600 mt-0.5 text-sm"></i>
+<div>
+<strong className="font-semibold">Catatan KDIGO 2024:</strong> Pemeriksaan Sistatin C tidak diisi. Penambahan Sistatin C untuk menghitung <em>eGFRcr-cys</em> sangat direkomendasikan untuk meningkatkan akurasi konfirmatori, terutama pada lansia, variasi massa otot ekstrem, atau penyakit kronis.
+</div>
+</div>
+) : (
+<div className="p-3 bg-teal-50 border border-teal-200 rounded-xl text-teal-800 text-xs flex items-start gap-2.5">
+<i className="fa-solid fa-circle-check text-teal-600 mt-0.5 text-sm"></i>
+<div>
+<strong>Akurasi Tinggi:</strong> Nilai eGFRcr-cys (kombinasi) digunakan sebagai acuan utama evaluasi sesuai rekomendasi KDIGO 2024.
+</div>
+</div>
+)}
+
+{/* BSA De-indexed Result */}
+{useDeindexed && deindexedEGFR !== null && (
+<div className="p-3 bg-slate-100 border border-slate-300 rounded-xl flex items-center justify-between text-xs">
+<div>
+<span className="font-bold text-slate-700">eGFR Non-Indexed BSA:</span>
+<span className="text-slate-500 ml-1.5">(BSA Pasien: {bsa ? bsa.toFixed(2) : '--'} m²)</span>
+</div>
+<div className="font-extrabold text-slate-900 text-base">
+{deindexedEGFR} <span className="text-xs font-normal text-slate-600">mL/min</span>
+</div>
+</div>
+)}
+</div>
+
+{/* Overall Risk & Staging Summary */}
+{riskInfo && gStage && aStage && (
+<div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+<div className="flex justify-between items-center border-b pb-3 border-slate-100">
+<h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+Stratifikasi Risiko KDIGO 2024
+</h3>
+{!isChronicityConfirmed && (
+<span className="text-xs bg-rose-100 text-rose-700 px-2 py-0.5 rounded font-medium">
+Belum Dikonfirmasi 3 Bulan
+</span>
+)}
+</div>
+
+<div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+<div className="space-y-1">
+<div className="flex items-center gap-2">
+<span className="text-2xl font-black text-slate-900">{gStage.stage}</span>
+<span className="text-slate-400">/</span>
+<span className="text-2xl font-black text-slate-900">{aStage.stage}</span>
+</div>
+<p className="text-xs text-slate-600">
+GFR: <strong>{gStage.label}</strong> ({gStage.range}) <br/>
+Albuminuria: <strong>{aStage.label}</strong>
+</p>
+</div>
+
+<div className={`p-4 rounded-xl font-bold flex flex-col justify-center items-center sm:items-end ${riskInfo.color} shadow-md`}>
+<span className="text-xs opacity-90 uppercase tracking-wide">Kategori Risiko</span>
+<span className="text-base font-extrabold">{riskInfo.name}</span>
+</div>
+</div>
+
+{/* Monitoring Frequency Quick Advice */}
+<div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+<div className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+<i className="fa-regular fa-clock text-teal-600"></i>
+Rekomendasi Pemantauan KDIGO 2024:
+</div>
+<div className="text-xs font-semibold text-slate-800">
+{riskInfo.monitoring}
+</div>
+<p className="text-[11px] text-slate-500 leading-normal">
+{riskInfo.desc}
+</p>
+</div>
+</div>
+)}
+
+</div>
+</div>
+)}
+
+{/* SECTION 2: INTERACTIVE HEAT MAP MATRIX */}
+{activeTab === 'heatmap' && (
+<div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
+<div>
+<h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+<i className="fa-solid fa-table-cells text-teal-600"></i> Matriks Stratifikasi Risiko KDIGO 2024
+</h2>
+<p className="text-xs text-slate-500 mt-1">
+Peta risiko terbaru yang mengintegrasikan kategori GFR (G1-G5) dan Albuminuria (A1-A3). Sel bergaris tebal/bercahaya menunjukkan posisi pasien saat ini.
+</p>
+</div>
+
+{/* Heat Map Table */}
+<div className="overflow-x-auto">
+<table className="w-full border-collapse text-xs">
+<thead>
+<tr>
+<th colSpan="2" rowSpan="2" className="p-2 border border-slate-300 bg-slate-100 text-slate-700 font-bold text-center">
+Prognosis CKD Berdasarkan eGFR & Albuminuria
+</th>
+<th colSpan="3" className="p-2 border border-slate-300 bg-slate-200 text-slate-800 font-bold text-center uppercase tracking-wider">
+Kategori Persisten Albuminuria (UACR)
+</th>
+</tr>
+<tr>
+<th className="p-2 border border-slate-300 bg-slate-100 text-slate-800 font-semibold text-center w-1/4">
+A1<br/><span className="font-normal text-[10px] text-slate-500">Normal / Meningkat Ringan<br/>(&lt;30 mg/g)</span>
+</th>
+<th className="p-2 border border-slate-300 bg-slate-100 text-slate-800 font-semibold text-center w-1/4">
+A2<br/><span className="font-normal text-[10px] text-slate-500">Meningkat Sedang<br/>(30-300 mg/g)</span>
+</th>
+<th className="p-2 border border-slate-300 bg-slate-100 text-slate-800 font-semibold text-center w-1/4">
+A3<br/><span className="font-normal text-[10px] text-slate-500">Meningkat Berat<br/>(&gt;300 mg/g)</span>
+</th>
+</tr>
+</thead>
+<tbody>
+{[
+{ stage: 'G1', label: '≥ 90', desc: 'Normal / Tinggi' },
+{ stage: 'G2', label: '60-89', desc: 'Penurunan Ringan' },
+{ stage: 'G3a', label: '45-59', desc: 'Penurunan Ringan-Sedang' },
+{ stage: 'G3b', label: '30-44', desc: 'Penurunan Sedang-Berat' },
+{ stage: 'G4', label: '15-29', desc: 'Penurunan Berat' },
+{ stage: 'G5', label: '< 15', desc: 'Gagal Ginjal' },
+].map((gRow) => (
+<tr key={gRow.stage}>
+<td className="p-2 border border-slate-300 bg-slate-100 font-bold text-slate-800 text-center w-16">
+{gRow.stage}
+</td>
+<td className="p-2 border border-slate-300 bg-slate-50 text-slate-700 font-medium">
+<div>{gRow.desc}</div>
+<div className="text-[10px] text-slate-400 font-mono">{gRow.label} mL/min/1.73m²</div>
+</td>
+
+{['A1', 'A2', 'A3'].map((aCol) => {
+const riskKey = RISK_GRID[gRow.stage][aCol];
+const isSelected = gStage?.stage === gRow.stage && aStage?.stage === aCol;
+const rDetails = RISK_DETAILS[riskKey];
+
+return (
+<td
+key={aCol}
+className={`p-3 border border-slate-300 transition-all text-center relative ${rDetails.color} ${
+isSelected
+? 'ring-4 ring-slate-900 shadow-2xl z-10 scale-[1.02]'
+: 'opacity-85 hover:opacity-100'
+}`}
+>
+{isSelected && (
+<div className="absolute top-1 right-1 bg-slate-900 text-white rounded-full w-5 h-5 flex items-center justify-center text-[10px] font-bold shadow">
+✓
+</div>
+)}
+<div className="font-bold text-xs uppercase tracking-wider">{rDetails.name.split(' ')[1]}</div>
+<div className="text-[10px] opacity-90 mt-1">{rDetails.monitoring}</div>
+</td>
+);
+})}
+</tr>
+))}
+</tbody>
+</table>
+</div>
+
+{/* Heatmap Legend & KDIGO 2024 Highlight Note */}
+<div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+<div className="p-4 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-2">
+<div className="font-bold text-slate-800">Catatan Pembaruan KDIGO 2024:</div>
+<p className="text-slate-600 leading-relaxed">
+<strong>Zona Risiko Tinggi pada G1/A3 & G2/A3:</strong> KDIGO 2024 mempertegas bahwa pasien dengan eGFR normal/terpreservasi namun memiliki albuminuria berat (&gt;300 mg/g) berada pada risiko kardiovaskular & mortalitas ginjal yang signifikan (Risiko Tinggi - Oranye).
+</p>
+</div>
+<div className="p-4 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-2">
+<div className="font-bold text-slate-800">Panduan Rujukan Nefrologi:</div>
+<ul className="list-disc list-inside text-slate-600 space-y-1">
+<li><strong>Rujuk Segera:</strong> Risiko Sangat Tinggi (Merah Tua/G4/G5) atau UACR &gt;300 mg/g yang persisten.</li>
+<li><strong>Rujuk KFRE:</strong> Risiko gagal ginjal 5-tahun ≥ 3-5%.</li>
+<li><strong>Penurunan eGFR Akut:</strong> Penurunan eGFR &gt;30% dalam 4 bulan.</li>
+</ul>
+</div>
+</div>
+</div>
+)}
+
+{/* SECTION 3: KFRE MODULE (Kidney Failure Risk Equation) */}
+{activeTab === 'kfre' && (
+<div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
+<div>
+<h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+<i className="fa-solid fa-chart-line text-teal-600"></i> Kidney Failure Risk Equation (KFRE) 4-Variabel
+</h2>
+<p className="text-xs text-slate-500 mt-1">
+Estimasi risiko individu pasien mengalami gagal ginjal yang memerlukan terapi pengganti ginjal (dialisis/transplantasi) dalam jangka waktu 2 tahun dan 5 tahun (KDIGO 2024 Recommended).
+</p>
+</div>
+
+{kfreResult ? (
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+{/* 2-Year Risk Card */}
+<div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+<span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Risiko Gagal Ginjal 2 Tahun</span>
+<div className="flex items-baseline gap-2">
+<span className="text-4xl font-extrabold text-slate-900">{kfreResult.twoYear}%</span>
+<span className="text-xs text-slate-500">probabilitas</span>
+</div>
+<div className="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
+<div
+className="bg-teal-600 h-2.5 rounded-full"
+style={{ width: `${Math.min(kfreResult.twoYear, 100)}%` }}
+></div>
+</div>
+<p className="text-[11px] text-slate-500">
+Estimasi kemungkinan kebutuhan dialisis/transplantasi dalam kurun 24 bulan ke depan.
+</p>
+</div>
+
+{/* 5-Year Risk Card & Threshold Highlight */}
+<div className={`p-5 rounded-2xl border space-y-3 ${
+kfreResult.fiveYear >= 3.0
+? 'bg-rose-50 border-rose-300 text-rose-900'
+: 'bg-slate-50 border-slate-200'
+}`}>
+<div className="flex justify-between items-center">
+<span className="text-xs font-bold uppercase tracking-wider">Risiko Gagal Ginjal 5 Tahun</span>
+{kfreResult.fiveYear >= 3.0 && (
+<span className="text-[10px] bg-rose-700 text-white font-bold px-2 py-0.5 rounded">
+Di atas Ambang Rujukan
+</span>
+)}
+</div>
+<div className="flex items-baseline gap-2">
+<span className="text-4xl font-extrabold text-slate-900">{kfreResult.fiveYear}%</span>
+<span className="text-xs opacity-75">probabilitas</span>
+</div>
+<div className="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
+<div
+className={`h-2.5 rounded-full ${kfreResult.fiveYear >= 3.0 ? 'bg-rose-600' : 'bg-teal-600'}`}
+style={{ width: `${Math.min(kfreResult.fiveYear, 100)}%` }}
+></div>
+</div>
+
+{/* Action Threshold Guidance */}
+{kfreResult.fiveYear >= 3.0 ? (
+<div className="p-3 bg-white/80 rounded-xl border border-rose-200 text-xs space-y-1">
+<strong className="font-bold text-rose-800 flex items-center gap-1">
+<i className="fa-solid fa-triangle-exclamation"></i> Indikasi Rujukan Nefrologi (KDIGO 2024):
+</strong>
+<p className="text-rose-700">
+Risiko 5-tahun pasien (<strong>{kfreResult.fiveYear}%</strong>) telah mencapai/melebihi ambang batas <strong>3% - 5%</strong>. Disarankan untuk segera merujuk ke Spesialis Ginjal Hipertensi (Nefrolog) untuk perencanaan modalitas dan pencegahan progresivitas.
+</p>
+</div>
+) : (
+<p className="text-[11px] text-slate-500">
+Risiko 5 tahun masih di bawah ambang rujukan 3-5%. Pertahankan terapi konservatif dan pemantauan berkala.
+</p>
+)}
+</div>
+
+</div>
+) : (
+<div className="p-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-300 text-slate-500 text-xs">
+<i className="fa-solid fa-calculator text-2xl mb-2 text-slate-400"></i>
+<p>Lengkapi parameter Usia, eGFR, dan UACR pada tab Kalkulator untuk menampilkan kalkulasi KFRE.</p>
+</div>
+)}
+
+{/* Technical KFRE explanation */}
+<div className="p-4 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-600 space-y-2">
+<div className="font-bold text-slate-800">Variabel yang Digunakan dalam KFRE 4-Variabel:</div>
+<div className="grid grid-cols-2 md:grid-cols-4 gap-2 font-medium">
+<div className="bg-white p-2 rounded border border-slate-200 text-center">1. Usia Pasien</div>
+<div className="bg-white p-2 rounded border border-slate-200 text-center">2. Jenis Kelamin</div>
+<div className="bg-white p-2 rounded border border-slate-200 text-center">3. eGFR (CKD-EPI)</div>
+<div className="bg-white p-2 rounded border border-slate-200 text-center">4. UACR (mg/g)</div>
+</div>
+</div>
+</div>
+)}
+
+{/* SECTION 4: CDSS & CLINICAL MANAGEMENT GUIDANCE */}
+{activeTab === 'guidelines' && (
+<div className="space-y-6">
+<div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
+<div>
+<h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+<i className="fa-solid fa-user-md text-teal-600"></i> Clinical Decision Support System (CDSS) - KDIGO 2024
+</h2>
+<p className="text-xs text-slate-500 mt-1">
+Rekomendasi penyesuaian obat, protokol skrining, diet natrium, dan indikasi rujukan spesialis yang disesuaikan dengan profil pasien saat ini.
+</p>
+</div>
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+{/* Medication Safety & Dosing */}
+<div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+<h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+<i className="fa-solid fa-pills text-teal-600"></i> Keamanan & Penyesuaian Dosis Obat
+</h3>
+<ul className="text-xs text-slate-600 space-y-2 leading-relaxed">
+<li className="flex items-start gap-2">
+<span className="text-teal-600 font-bold">•</span>
+<span><strong>Acuan Dosis:</strong> Sebagian besar obat disesuaikan berbasis <em>eGFRcr</em>. Namun untuk obat indeks terapi sempit (kemoterapi, imunosupresan, aminoglikosida), gunakan <strong>eGFRcr-cys</strong> atau eGFR non-indexed BSA.</span>
+</li>
+<li className="flex items-start gap-2">
+<span className="text-teal-600 font-bold">•</span>
+<span><strong>Golongan RAASi (ACEi/ARB):</strong> Pertahankan dosis jika eGFR stabil. Pantau kalium serum dan eGFR 2-4 minggu setelah inisiasi/peningkatan dosis. Jangan hentikan RAASi secara rutin hanya karena eGFR &lt;30 mL/min.</span>
+</li>
+<li className="flex items-start gap-2">
+<span className="text-teal-600 font-bold">•</span>
+<span><strong>Inhibitor SGLT2:</strong> Direkomendasikan untuk pasien CKD dengan eGFR ≥20 mL/min/1.73m² (dengan atau tanpa diabetes) untuk memperlambat progresivitas ginjal.</span>
+</li>
+<li className="flex items-start gap-2">
+<span className="text-rose-600 font-bold">•</span>
+<span><strong>Peringatan Obat:</strong> Hindari penggunaan berulang NSAID/OAINS jangka panjang. Sesuaikan dosis Metformin jika eGFR 30-45 mL/min dan kontraindikasi jika eGFR &lt;30 mL/min.</span>
+</li>
+</ul>
+</div>
+
+{/* Lifestyle & Dietary Sodium Guidance */}
+<div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+<h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+<i className="fa-solid fa-utensils text-teal-600"></i> Gaya Hidup & Pembatasan Natrium
+</h3>
+<ul className="text-xs text-slate-600 space-y-2 leading-relaxed">
+<li className="flex items-start gap-2">
+<span className="text-teal-600 font-bold">•</span>
+<span><strong>Diet Natrium KDIGO 2024:</strong> Batasi asupan natrium hingga <strong>&lt; 2 gram/hari</strong> (setara dengan &lt;5 gram garam dapur/hari) untuk pasien dengan eGFR &lt;60 mL/min, hipertensi, atau proteinuria.</span>
+</li>
+<li className="flex items-start gap-2">
+<span className="text-teal-600 font-bold">•</span>
+<span><strong>Asupan Protein:</strong> Rekomendasikan asupan protein diet <strong>0.8 g/kgBB/hari</strong> untuk CKD G3-G5 non-dialisis guna memperlambat penurunan fungsi ginjal.</span>
+</li>
+<li className="flex items-start gap-2">
+<span className="text-teal-600 font-bold">•</span>
+<span><strong>Aktivitas Fisik:</strong> Anjurkan olahraga aerobik intensitas sedang minimal 150 menit per minggu disesuaikan dengan kondisi kardiovaskular pasien.</span>
+</li>
+</ul>
+</div>
+
+</div>
+
+{/* Nephrology Referral & Replacement Planning */}
+<div className="p-5 bg-teal-50/60 rounded-2xl border border-teal-200 space-y-3">
+<h3 className="text-xs font-bold text-teal-900 uppercase tracking-wider flex items-center gap-2">
+<i className="fa-solid fa-hospital-user text-teal-700"></i> Kriteria Rujukan Nefrologi & Persiapan Terapi Pengganti Ginjal
+</h3>
+<div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs text-teal-900">
+<div className="p-3 bg-white rounded-xl border border-teal-100">
+<strong className="block text-slate-800 mb-1">eGFR &lt; 30 mL/min (G4-G5)</strong>
+Rujuk ke Spesialis Ginjal Hipertensi untuk penanganan komplikasi metabolik & edukasi modalitas dialisis/transplantasi.
+</div>
+<div className="p-3 bg-white rounded-xl border border-teal-100">
+<strong className="block text-slate-800 mb-1">Albuminuria Berat (A3)</strong>
+UACR &gt;300 mg/g (&gt;30 mg/mmol) persisten memerlukan evaluasi etiologi spesifik & terapi antiproteinuria terfokus.
+</div>
+<div className="p-3 bg-white rounded-xl border border-teal-100">
+<strong className="block text-slate-800 mb-1">Prediksi KFRE ≥ 3-5%</strong>
+Risiko gagal ginjal 5 tahun yang signifikan memerlukan persiapan akses vaskular/peritoneal lebih awal.
+</div>
+</div>
+</div>
+</div>
+</div>
+)}
+
+{/* PRINT ONLY SECTION - FORMAL CLINICAL REPORT */}
+<div className="print-only space-y-4 p-4 text-xs">
+<div className="border-b-2 border-slate-900 pb-3 flex justify-between items-end">
+<div>
+<h1 className="text-xl font-bold uppercase tracking-wide text-slate-900">Laporan Evaluasi CKD (KDIGO 2024)</h1>
+<p className="text-slate-600">Sistem Pendukung Keputusan Klinis GinjalKita</p>
+<p className="text-slate-600">Supervisi: dr. Puguh Widagdo, SpPD - FINASIM · Fellowship Hemodialisis</p>
+</div>
+<div className="text-right text-slate-500">
+<p>Tanggal Cetak: {new Date().toLocaleDateString('id-ID')}</p>
+</div>
+</div>
+
+<div className="grid grid-cols-2 gap-4 border p-3 rounded">
+<div>
+<p><strong>Usia:</strong> {age} tahun</p>
+<p><strong>Jenis Kelamin:</strong> {sex === 'male' ? 'Laki-laki' : 'Perempuan'}</p>
+<p><strong>Berat / Tinggi:</strong> {weight} kg / {height} cm (BSA: {bsa ? bsa.toFixed(2) : '--'} m²)</p>
+{calcBMI(parseFloat(weight), parseFloat(height)) != null && (
+<p><strong>BMI:</strong> {calcBMI(parseFloat(weight), parseFloat(height)).toFixed(1)} kg/m² — WHO Asia-Pasifik: {bmiCategory('apac', calcBMI(parseFloat(weight), parseFloat(height))).label}; Kemenkes: {bmiCategory('kemenkes', calcBMI(parseFloat(weight), parseFloat(height))).label}</p>
+)}
+</div>
+<div>
+<p><strong>Serum Kreatinin:</strong> {scr} mg/dL</p>
+<p><strong>Serum Sistatin C:</strong> {scys ? `${scys} mg/L` : 'Tidak diperiksa'}</p>
+<p><strong>UACR:</strong> {uacr} {uacrUnit === 'mgg' ? 'mg/g' : 'mg/mmol'} ({Math.round(normalizedUACR)} mg/g)</p>
+</div>
+</div>
+
+<div className="border p-3 rounded bg-slate-50 space-y-1">
+<h2 className="font-bold text-sm text-slate-900">Hasil Kalkulasi & Stratifikasi:</h2>
+<p>• <strong>eGFRcr (CKD-EPI 2021):</strong> {egfrCr || '--'} mL/min/1.73m²</p>
+{egfrCrCys && <p>• <strong>eGFRcr-cys (Kombinasi KDIGO 2024):</strong> {egfrCrCys} mL/min/1.73m² (Acuan Utama)</p>}
+<p>• <strong>Kategori GFR / Albuminuria:</strong> {gStage?.stage} / {aStage?.stage}</p>
+<p>• <strong>Stratifikasi Risiko KDIGO:</strong> {riskInfo?.name}</p>
+<p>• <strong>Rekomendasi Pemantauan:</strong> {riskInfo?.monitoring}</p>
+{kfreResult && <p>• <strong>Estimasi Risiko KFRE (5-Tahun):</strong> {kfreResult.fiveYear}%</p>}
+</div>
+
+<div className="border p-3 rounded space-y-1">
+<h2 className="font-bold text-sm text-slate-900">Rekomendasi Klinis:</h2>
+<p>- Pembatasan Natrium &lt;2g/hari jika hipertensi/proteinuria.</p>
+<p>- Pertimbangkan inisiasi RAASi & SGLT2i sesuai indikasi.</p>
+<p>- Penyesuaian dosis obat berbasis eGFR sesuai kriteria di atas.</p>
+</div>
+
+<div className="pt-8 flex justify-between text-slate-500">
+<div>
+<p>Dokter Pemeriksa,</p>
+<div className="h-12"></div>
+<p>( ________________________ )</p>
+</div>
+</div>
+</div>
+
+</main>
+
+{/* FOOTER */}
+<footer className="bg-slate-900 text-slate-400 text-xs py-4 border-t border-slate-800 no-print">
+<div className="max-w-7xl mx-auto px-4 text-center space-y-1">
+<p>Sistem Evaluasi CKD Berbasis Pedoman KDIGO 2024 (Clinical Practice Guideline for Evaluation & Management of CKD).</p>
+<p className="text-teal-300 font-medium">Supervisi: dr. Puguh Widagdo, SpPD - FINASIM · Fellowship Hemodialisis</p>
+<p className="text-slate-500">Aplikasi ini ditujukan sebagai alat bantu keputusan klinis (CDSS) bagi tenaga medis profesional.</p>
+</div>
+</footer>
+
+{/* GUIDELINE INFORMATION MODAL */}
+{isGuidelineModalOpen && (
+<div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 no-print">
+<div className="bg-white rounded-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-6 space-y-4 shadow-2xl border border-slate-100">
+<div className="flex justify-between items-center border-b pb-3">
+<h3 className="font-bold text-slate-900 text-base flex items-center gap-2">
+<i className="fa-solid fa-book-medical text-teal-600"></i> Ringkasan Pembaruan KDIGO 2024
+</h3>
+<button
+onClick={() => setIsGuidelineModalOpen(false)}
+className="text-slate-400 hover:text-slate-600 text-lg font-bold"
+>
+×
+</button>
+</div>
+
+<div className="space-y-3 text-xs text-slate-600 leading-relaxed">
+<p>
+Pedoman <strong>KDIGO 2024 Clinical Practice Guideline for the Evaluation and Management of CKD</strong> memperkenalkan beberapa perubahan kunci dalam tata laksana ginjal kronis:
+</p>
+<div className="p-3 bg-slate-50 rounded-xl space-y-1 border">
+<strong className="text-slate-800 block">1. Formula CKD-EPI 2021 & Sistatin C</strong>
+<p>Menghapus faktor ras secara menyeluruh. Penggunaan eGFRcr-cys (kombinasi) secara proaktif direkomendasikan untuk mengonfirmasi eGFR pada kondisi kritis atau ketidakakuratan kreatinin.</p>
+</div>
+
+<div className="p-3 bg-slate-50 rounded-xl space-y-1 border">
+<strong className="text-slate-800 block">2. Penekanan Zona Risiko Tinggi G1/A3 & G2/A3</strong>
+<p>Pasien dengan fungsi ekskresi terpreservasi (eGFR ≥60) namun menderita albuminuria berat tetap berada dalam kategori risiko tinggi kardiovaskular dan penurunan fungsi ginjal.</p>
+</div>
+
+<div className="p-3 bg-slate-50 rounded-xl space-y-1 border">
+<strong className="text-slate-800 block">3. Integrasi Equation Risiko Individu (KFRE)</strong>
+<p>Penggunaan formula KFRE 4-variabel sebagai acuan waktu rujukan spesialis nefrologi (ambang risiko 5-tahun 3-5%).</p>
+</div>
+
+<div className="p-3 bg-slate-50 rounded-xl space-y-1 border">
+<strong className="text-slate-800 block">4. Pendekatan Farmakoterapi Ginjal Modern</strong>
+<p>Rekomendasi kuat inisiasi SGLT2i dan RAASi untuk perlindungan organ ginjal dan jantung jangka panjang.</p>
+</div>
+</div>
+
+<div className="pt-2 flex justify-end border-t">
+<button
+onClick={() => setIsGuidelineModalOpen(false)}
+className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white font-semibold text-xs rounded-lg shadow"
+>
+Tutup Panduan
+</button>
+</div>
+</div>
+</div>
+)}
+
+</div>
+);
+}
+
+// Render React Application
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+
+</script>
+</body>
+</html>
